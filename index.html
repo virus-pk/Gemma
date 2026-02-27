@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gemma 3 · 4B · LOCAL</title>
+  <style>
+    :root {
+      --bg: #0a0a0a; /* deep charcoal */
+      --surface: rgba(255, 255, 255, 0.04); /* subtle glass */
+      --accent: #00bfa5; /* teal accent */
+      --text-primary: #e0e0e0;
+      --text-muted: #a0a0a0;
+      --border-radius: 8px;
+      --transition: 0.2s ease;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background: var(--bg);
+      color: var(--text-primary);
+      font-family: 'Inter', system-ui, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 1rem;
+      text-align: center;
+      font-size: 1.5rem;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    header:hover::after {
+      content: "Gemma 3 4B – Local AI Coding Assistant";
+      display: block;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: 0.3rem;
+    }
+    #output {
+      flex: 1;
+      padding: 1rem;
+      overflow-y: auto;
+      font-family: "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+      line-height: 1.4;
+    }
+    .message {
+      margin-bottom: 0.8rem;
+      opacity: 0;
+      animation: fadeIn 0.3s forwards;
+    }
+    @keyframes fadeIn {
+      to { opacity: 1; }
+    }
+    #input-area {
+      display: flex;
+      padding: 1rem;
+      gap: 0.5rem;
+      background: var(--surface);
+      backdrop-filter: blur(8px);
+    }
+    #prompt {
+      flex: 1;
+      padding: 0.6rem 0.8rem;
+      border: none;
+      border-radius: var(--border-radius);
+      background: rgba(255,255,255,0.07);
+      color: var(--text-primary);
+      font-size: 1rem;
+      outline: none;
+      transition: var(--transition);
+    }
+    #prompt:focus {
+      background: rgba(255,255,255,0.12);
+    }
+    #send {
+      padding: 0.6rem 1rem;
+      border: none;
+      border-radius: var(--border-radius);
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+    #send:hover {
+      background: #00a393;
+    }
+    .cursor {
+      display: inline-block;
+      width: 1px;
+      background: #007aff;
+      animation: blink 1s steps(2) infinite;
+      margin-left: 2px;
+    }
+    @keyframes blink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>Gemma 3 · 4B · LOCAL</header>
+  <div id="output"></div>
+  <div id="input-area">
+    <input type="text" id="prompt" placeholder="Ask Gemma..." autocomplete="off" />
+    <button id="send">Generate</button>
+  </div>
+  <script>
+    const output = document.getElementById('output');
+    const promptInput = document.getElementById('prompt');
+    const sendBtn = document.getElementById('send');
+
+    function addMessage(text, isUser) {
+      const div = document.createElement('div');
+      div.className = 'message';
+      div.style.textAlign = isUser ? 'right' : 'left';
+      div.textContent = text;
+      output.appendChild(div);
+      output.scrollTop = output.scrollHeight;
+    }
+
+    async function generate() {
+      const userPrompt = promptInput.value.trim();
+      if (!userPrompt) return;
+      addMessage(userPrompt, true);
+      promptInput.value = '';
+      const cursor = document.createElement('span');
+      cursor.className = 'cursor';
+      const responseDiv = document.createElement('div');
+      responseDiv.className = 'message';
+      responseDiv.appendChild(cursor);
+      output.appendChild(responseDiv);
+      output.scrollTop = output.scrollHeight;
+
+      try {
+        const resp = await fetch('http://127.0.0.1:11434/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: 'gemma3:4b', prompt: userPrompt, stream: true })
+        });
+        if (!resp.ok) throw new Error('Network response was not ok');
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let done = false;
+        while (!done) {
+          const { value, done: doneReading } = await reader.read();
+          done = doneReading;
+          if (value) {
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const json = JSON.parse(line);
+                if (json.response) {
+                  cursor.insertAdjacentText('beforebegin', json.response);
+                  output.scrollTop = output.scrollHeight;
+                }
+              } catch (e) { /* ignore non‑JSON lines */ }
+            }
+          }
+        }
+        cursor.remove();
+      } catch (err) {
+        cursor.remove();
+        addMessage('Error: ' + err.message, false);
+      }
+    }
+
+    sendBtn.addEventListener('click', generate);
+    promptInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') generate();
+    });
+  </script>
+</body>
+</html>
