@@ -1,6 +1,8 @@
-// GemmaGUI.swift
-import SwiftUI
+#!/usr/bin/env swift
 import Combine
+import SwiftUI
+
+// GemmaGUI.swift
 
 // MARK: - Engine
 class GemmaEngine: ObservableObject {
@@ -10,7 +12,7 @@ class GemmaEngine: ObservableObject {
     private var cancellable: AnyCancellable?
     private let model = "gemma3:4b"
     private let endpoint = URL(string: "http://localhost:11434/api/generate")!
-    
+
     func generate() {
         guard !instruction.isEmpty else { return }
         isGenerating = true
@@ -19,32 +21,36 @@ class GemmaEngine: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = ["model": model, "prompt": instruction, "stream": true]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        
-        cancellable = URLSession.shared.bytes(for: request)
-            .map { $0.0 }
-            .flatMap { AsyncThrowingStream<Data, Error> { continuation in
-                Task {
-                    for try await line in $0.lines {
-                        continuation.yield(line.data(using: .utf8) ?? Data())
-                    }
-                    continuation.finish()
+
+        // Use async/await to stream response
+        Task {
+            defer {
+                // Reset UI state after completion
+                await MainActor.run {
+                    self.isGenerating = false
+                    self.instruction = ""
                 }
-            } }
-            .compactMap { String(data: $0, encoding: .utf8) }
-            .compactMap { line -> String? in
-                guard let json = try? JSONSerialization.jsonObject(with: Data(line.utf8), options: []) as? [String: Any],
-                      let resp = json["response"] as? String else { return nil }
-                return resp
             }
-            .receive(on: DispatchQueue.main)
-            .sink(receiveCompletion: { [weak self] _ in
-                self?.isGenerating = false
-                self?.instruction = ""
-            }, receiveValue: { [weak self] chunk in
-                withAnimation(.easeIn(duration: 0.2)) {
-                    self?.output += chunk
+            do {
+                let (bytes, _) = try await URLSession.shared.bytes(for: request)
+                for try await line in bytes.lines {
+                    // Each line is a JSON string
+                    guard
+                        let json = try? JSONSerialization.jsonObject(
+                            with: Data(line.utf8), options: []) as? [String: Any],
+                        let resp = json["response"] as? String
+                    else { continue }
+                    await MainActor.run {
+                        self.output += resp
+                    }
                 }
-            })
+            } catch {
+                // Show error in output (optional)
+                await MainActor.run {
+                    self.output += "\n[Error: \(error.localizedDescription)]"
+                }
+            }
+        }
     }
 }
 
@@ -66,7 +72,7 @@ struct ContentView: View {
                         .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
                 )
                 .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
-                
+
             // Output area
             ScrollView {
                 Text(engine.output)
@@ -81,7 +87,7 @@ struct ContentView: View {
                     .stroke(Color.white.opacity(0.2), lineWidth: 1)
             )
             .padding()
-            
+
             // Input area
             HStack {
                 TextField("Ask Gemma...", text: $engine.instruction)
@@ -92,7 +98,7 @@ struct ContentView: View {
                     .foregroundColor(.white)
                     .focused($promptFocused)
                     .onSubmit { engine.generate() }
-                
+
                 if engine.isGenerating {
                     ProgressView()
                         .progressViewStyle(.circular)
