@@ -5,6 +5,7 @@ import SwiftUI
 // GemmaGUI.swift
 
 // MARK: - Engine
+@MainActor
 class GemmaEngine: ObservableObject {
     @Published var output: String = ""
     @Published var instruction: String = ""
@@ -24,13 +25,6 @@ class GemmaEngine: ObservableObject {
 
         // Use async/await to stream response
         Task {
-            defer {
-                // Reset UI state after completion
-                await MainActor.run {
-                    self.isGenerating = false
-                    self.instruction = ""
-                }
-            }
             do {
                 let (bytes, _) = try await URLSession.shared.bytes(for: request)
                 for try await line in bytes.lines {
@@ -40,16 +34,17 @@ class GemmaEngine: ObservableObject {
                             with: Data(line.utf8), options: []) as? [String: Any],
                         let resp = json["response"] as? String
                     else { continue }
-                    await MainActor.run {
-                        self.output += resp
-                    }
+
+                    self.output += resp
                 }
             } catch {
-                // Show error in output (optional)
-                await MainActor.run {
-                    self.output += "\n[Error: \(error.localizedDescription)]"
-                }
+                // Show error in output
+                self.output += "\n[Error: \(error.localizedDescription)]"
             }
+
+            // Reset UI state after completion (previously in defer)
+            self.isGenerating = false
+            self.instruction = ""
         }
     }
 }
